@@ -1,4 +1,4 @@
-pip install streamlit pandas matplotlib seaborn folium prophet
+!pip install streamlit pandas matplotlib seaborn folium prophet
 # Importação de Bibliotecas
 import streamlit as st
 import pandas as pd
