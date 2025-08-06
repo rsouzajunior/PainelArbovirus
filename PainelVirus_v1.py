@@ -2,13 +2,11 @@
 import streamlit as st
 import pandas as pd
 import json
+import plotly.express as px
+import pydeck as pdk
 import matplotlib.pyplot as plt
 import seaborn as sns
-import folium
-from folium.plugins import HeatMap
-from prophet import Prophet
 import warnings
-import base64
 
 # Ignorar avisos para um painel mais limpo
 warnings.filterwarnings('ignore')
@@ -17,11 +15,11 @@ warnings.filterwarnings('ignore')
 # 1. Configuração do Streamlit e Carregamento de Dados
 # --------------------------------------------------------------------------------
 
-st.set_page_config(layout="wide", page_title="Painel Epidemiológico")
+st.set_page_config(layout="wide", page_title="Painel Epidemiológico Interativo")
 
 # Título principal do aplicativo
-st.title("🔬 Painel de Análise Epidemiológica de Doenças Arboviroses")
-st.markdown("Uma ferramenta interativa para análise e predição de doenças epidemiológicas com foco em visualizações, correlação e tendências.")
+st.title("🔬 Painel de Análise de Doenças Arboviroses (Interativo)")
+st.markdown("Uma ferramenta visual e interativa para análise, predição e mapeamento de dados epidemiológicos.")
 
 # Seus dados em formato JSON (corrigido)
 dados_json = """
@@ -216,7 +214,7 @@ dados_json = """
 @st.cache_data
 def load_data():
     df = pd.read_json(dados_json)
-    df.rename(columns={'data': 'Data Notificação', 'municipio': 'Município', 'doenca': 'doença',
+    df.rename(columns={'data': 'Data Notificação', 'municipio': 'Município', 'doenca': 'Doença',
                        'sexo': 'Sexo', 'faixa': 'Faixa Etária', 'total_casos': 'Quantidade de casos'}, inplace=True)
     df['Data Notificação'] = pd.to_datetime(df['Data Notificação'])
     return df
@@ -225,209 +223,219 @@ df_original = load_data()
 
 # Dicionário de cores para consistência visual
 cores_doencas = {
-    "Dengue": "#0072B2",
-    "Zika": "#D55E00",
-    "Chikungunya": "#009E73",
-    "Febre Amarela": "#F0E442",
-    "Febre Oropouche": "#CC79A7",
-    "Encefalite": "#999999"
+    "Dengue": "rgb(0, 114, 178)",
+    "Zika": "rgb(213, 94, 0)",
+    "Chikungunya": "rgb(0, 158, 115)",
+    "Febre Amarela": "rgb(240, 228, 66)",
+    "Febre Oropouche": "rgb(204, 121, 167)",
+    "Encefalite": "rgb(153, 153, 153)"
 }
 
 # Dicionário de coordenadas de municípios do Ceará
 coordenadas_ceara = {
-    "Fortaleza": [-3.7319, -38.5267],
-    "Juazeiro do Norte": [-7.2098, -39.3175],
-    "Sobral": [-3.6888, -40.3541],
-    "Crato": [-7.2343, -39.4005],
-    "Caucaia": [-3.7381, -38.6534],
-    "Maracanaú": [-3.8732, -38.6258],
-    "Itapipoca": [-3.1469, -39.5708],
-    "Iguatu": [-6.3622, -39.2978],
-    "Quixadá": [-4.9744, -39.0189],
-    "Canindé": [-4.3547, -39.3156],
-    "Crateús": [-5.1783, -40.6844],
-    "Russas": [-4.9411, -37.9831],
-    "Aracati": [-4.5617, -37.7694],
-    "Tianguá": [-3.2167, -40.9756],
+    "Fortaleza": [-3.7319, -38.5267], "Juazeiro do Norte": [-7.2098, -39.3175],
+    "Sobral": [-3.6888, -40.3541], "Crato": [-7.2343, -39.4005],
+    "Caucaia": [-3.7381, -38.6534], "Maracanaú": [-3.8732, -38.6258],
+    "Itapipoca": [-3.1469, -39.5708], "Iguatu": [-6.3622, -39.2978],
+    "Quixadá": [-4.9744, -39.0189], "Canindé": [-4.3547, -39.3156],
+    "Crateús": [-5.1783, -40.6844], "Russas": [-4.9411, -37.9831],
+    "Aracati": [-4.5617, -37.7694], "Tianguá": [-3.2167, -40.9756],
     "Maranguape": [-3.8828, -38.6811]
 }
-
-# Adicionar coordenadas ao DataFrame
-df_original['Latitude'] = df_original['Município'].map(lambda x: coordenadas_ceara.get(x, [None, None])[0])
-df_original['Longitude'] = df_original['Município'].map(lambda x: coordenadas_ceara.get(x, [None, None])[1])
-df_com_coords = df_original.dropna(subset=['Latitude', 'Longitude'])
 
 # --------------------------------------------------------------------------------
 # 2. Sidebar para Filtros
 # --------------------------------------------------------------------------------
 
 st.sidebar.header("Filtros de Análise")
-doenca_selecionada = st.sidebar.selectbox("Selecione a Doença", ['Todas'] + sorted(df_original['doença'].unique()))
+doencas_disponiveis = sorted(df_original['Doença'].unique())
+doencas_selecionadas = st.sidebar.multiselect("Selecione as Doenças", doencas_disponiveis, default=doencas_disponiveis)
 municipio_selecionado = st.sidebar.selectbox("Selecione o Município", ['Todos'] + sorted(df_original['Município'].unique()))
-periodos_predicao = st.sidebar.slider("Períodos para Predição (Meses)", min_value=1, max_value=12, value=6)
+
+# Filtro por data
+data_minima = df_original['Data Notificação'].min().date()
+data_maxima = df_original['Data Notificação'].max().date()
+data_inicio, data_fim = st.sidebar.date_input("Filtrar por Período", value=(data_minima, data_maxima), min_value=data_minima, max_value=data_maxima)
 
 df_filtrado = df_original.copy()
-if doenca_selecionada != 'Todas':
-    df_filtrado = df_filtrado[df_filtrado['doença'] == doenca_selecionada]
+if doencas_selecionadas:
+    df_filtrado = df_filtrado[df_filtrado['Doença'].isin(doencas_selecionadas)]
 if municipio_selecionado != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['Município'] == municipio_selecionado]
+df_filtrado = df_filtrado[(df_filtrado['Data Notificação'].dt.date >= data_inicio) & (df_filtrado['Data Notificação'].dt.date <= data_fim)]
 
 # --------------------------------------------------------------------------------
-# 3. Métricas Principais
+# 3. Resumo dos Dados (Melhorado)
 # --------------------------------------------------------------------------------
 
 st.header("Resumo dos Dados")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Total de Casos", f"{df_filtrado['Quantidade de casos'].sum():,}")
+    st.markdown(f"**Total de Casos:** <br><div style='font-size: 2.5em; font-weight: bold; color: #0072B2;'>{df_filtrado['Quantidade de casos'].sum():,}</div>", unsafe_allow_html=True)
 with col2:
-    st.metric("Total de Doenças", df_filtrado['doença'].nunique())
+    st.markdown(f"**Doenças Selecionadas:** <br><div style='font-size: 2.5em; font-weight: bold; color: #D55E00;'>{df_filtrado['Doença'].nunique()}</div>", unsafe_allow_html=True)
 with col3:
-    st.metric("Total de Municípios", df_filtrado['Município'].nunique())
+    st.markdown(f"**Municípios:** <br><div style='font-size: 2.5em; font-weight: bold; color: #009E73;'>{df_filtrado['Município'].nunique()}</div>", unsafe_allow_html=True)
 with col4:
-    st.metric("Período de Análise", f"{df_filtrado['Data Notificação'].min().strftime('%Y-%m-%d')} a {df_filtrado['Data Notificação'].max().strftime('%Y-%m-%d')}")
+    st.markdown(f"**Período de Análise:** <br><div style='font-size: 1.5em; font-weight: bold;'>{data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------------
-# 4. Análise Exploratória e Comparativa
+# 4. Análise Exploratória e Comparativa (Gráficos interativos com Plotly)
 # --------------------------------------------------------------------------------
 
 st.header("Análise Exploratória")
 
-with st.expander("Gráficos de Distribuição de Casos"):
-    col1_a, col2_a = st.columns(2)
-    with col1_a:
-        st.subheader("Casos por Doença")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        casos_por_doenca_plot = df_filtrado.groupby('doença')['Quantidade de casos'].sum().sort_values(ascending=False)
-        casos_por_doenca_plot.plot(kind='bar', ax=ax, color=[cores_doencas.get(d, 'gray') for d in casos_por_doenca_plot.index])
-        ax.set_title('Total de Casos por Doença')
-        ax.set_xlabel('Doença')
-        ax.set_ylabel('Quantidade de Casos')
-        plt.xticks(rotation=45, ha='right')
-        st.pyplot(fig)
+col_a, col_b = st.columns(2)
+with col_a:
+    st.subheader("Casos por Doença")
+    casos_por_doenca_plot = df_filtrado.groupby('Doença')['Quantidade de casos'].sum().reset_index()
+    fig_doenca = px.bar(casos_por_doenca_plot, x='Doença', y='Quantidade de casos',
+                        color='Doença', color_discrete_map={d: cores_doencas[d] for d in doencas_disponiveis},
+                        title='Total de Casos por Doença',
+                        labels={'Quantidade de casos': 'Total de Casos', 'Doença': 'Doença'})
+    fig_doenca.update_layout(height=400)
+    st.plotly_chart(fig_doenca, use_container_width=True)
 
-    with col2_a:
-        st.subheader("Casos por Município")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        casos_por_municipio_plot = df_filtrado.groupby('Município')['Quantidade de casos'].sum().sort_values(ascending=False)
-        casos_por_municipio_plot.plot(kind='barh', ax=ax, color=sns.color_palette("viridis", len(casos_por_municipio_plot)))
-        ax.set_title('Municípios com Maior Incidência de Casos')
-        ax.set_xlabel('Quantidade de Casos')
-        ax.set_ylabel('Município')
-        st.pyplot(fig)
+with col_b:
+    st.subheader("Casos por Município")
+    casos_por_municipio_plot = df_filtrado.groupby('Município')['Quantidade de casos'].sum().reset_index()
+    fig_municipio = px.bar(casos_por_municipio_plot, x='Quantidade de casos', y='Município',
+                           title='Municípios com Maior Incidência', orientation='h',
+                           labels={'Quantidade de casos': 'Total de Casos', 'Município': 'Município'})
+    fig_municipio.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
+    st.plotly_chart(fig_municipio, use_container_width=True)
 
-with st.expander("Análise por Sexo e Faixa Etária"):
-    fig, axes = plt.subplots(1, 2, figsize=(18, 7), sharey=True)
-    sns.countplot(data=df_filtrado, y='doença', hue='Sexo', ax=axes[0], palette={'Feminino': 'pink', 'Masculino': 'lightblue'})
-    axes[0].set_title('Casos por Doença e Sexo')
-    axes[0].set_xlabel('Quantidade de Casos')
-    axes[0].set_ylabel('Doença')
+with st.expander("Análise Detalhada por Sexo e Faixa Etária"):
+    col_c, col_d = st.columns(2)
+    with col_c:
+        st.subheader("Casos por Doença e Sexo")
+        fig_sexo = px.bar(df_filtrado, y='Doença', x='Quantidade de casos', color='Sexo',
+                          title='Casos por Doença e Sexo', orientation='h',
+                          labels={'Quantidade de casos': 'Total de Casos'},
+                          color_discrete_map={'Masculino': '#1f77b4', 'Feminino': '#ff7f0e'})
+        fig_sexo.update_layout(height=400)
+        st.plotly_chart(fig_sexo, use_container_width=True)
 
-    sns.countplot(data=df_filtrado, y='doença', hue='Faixa Etária', ax=axes[1], palette='tab20')
-    axes[1].set_title('Casos por Doença e Faixa Etária')
-    axes[1].set_xlabel('Quantidade de Casos')
-    axes[1].set_ylabel('')
-    axes[1].legend(title='Faixa Etária', bbox_to_anchor=(1.05, 1), loc='upper left')
-    st.pyplot(fig)
+    with col_d:
+        st.subheader("Casos por Doença e Faixa Etária")
+        faixas_ordenadas = sorted(df_filtrado['Faixa Etária'].unique())
+        fig_faixa = px.bar(df_filtrado, y='Doença', x='Quantidade de casos', color='Faixa Etária',
+                           title='Casos por Doença e Faixa Etária', orientation='h',
+                           category_orders={'Faixa Etária': faixas_ordenadas},
+                           labels={'Quantidade de casos': 'Total de Casos'},
+                           color_discrete_sequence=px.colors.qualitative.Plotly)
+        fig_faixa.update_layout(height=400)
+        st.plotly_chart(fig_faixa, use_container_width=True)
+
 
 # --------------------------------------------------------------------------------
-# 5. Tendências e Correlação
+# 5. Tendências e Correlação (Melhorado)
 # --------------------------------------------------------------------------------
 
 st.header("Tendências Temporais e Correlação")
 
-with st.expander("Tendências de Casos ao Longo do Tempo"):
-    st.subheader("Tendência Temporal de Casos por Doença")
-    fig, ax = plt.subplots(figsize=(14, 8))
-    casos_por_data_doenca = df_filtrado.groupby(['Data Notificação', 'doença'])['Quantidade de casos'].sum().unstack(fill_value=0)
-    for doenca in casos_por_data_doenca.columns:
-        ax.plot(casos_por_data_doenca.index, casos_por_data_doenca[doenca], marker='o', linestyle='-', label=doenca, color=cores_doencas.get(doenca, 'gray'))
-    ax.set_title('Tendência Temporal de Casos por Doença')
-    ax.set_xlabel('Data de Notificação')
-    ax.set_ylabel('Quantidade de Casos')
-    ax.legend(title='Doença')
-    ax.grid(True)
-    plt.xticks(rotation=45, ha='right')
-    st.pyplot(fig)
+with st.expander("Tendência Temporal de Casos"):
+    st.subheader("Tendência Temporal de Casos por Doença (Interativo)")
+    casos_por_data_doenca = df_filtrado.groupby([pd.Grouper(key='Data Notificação', freq='M'), 'Doença'])['Quantidade de casos'].sum().reset_index()
+    fig_tendencia = px.line(casos_por_data_doenca, x='Data Notificação', y='Quantidade de casos', color='Doença',
+                           title='Tendência de Casos ao Longo do Tempo',
+                           color_discrete_map={d: cores_doencas[d] for d in doencas_disponiveis})
+    st.plotly_chart(fig_tendencia, use_container_width=True)
 
 with st.expander("Matriz de Correlação entre Doenças"):
-    st.subheader("Matriz de Correlação")
-    casos_pivot = df_original.pivot_table(index='Data Notificação', columns='doença', values='Quantidade de casos', fill_value=0, aggfunc='sum')
+    st.subheader("Matriz de Correlação entre Doenças")
+    casos_pivot = df_original.pivot_table(index='Data Notificação', columns='Doença', values='Quantidade de casos', fill_value=0, aggfunc='sum')
     if casos_pivot.shape[0] > 1 and casos_pivot.shape[1] > 1:
-        matriz_correlacao = casos_pivot.corr()
+        # Filtra a matriz para incluir apenas as doenças selecionadas
+        matriz_correlacao = casos_pivot[doencas_selecionadas].corr()
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.heatmap(matriz_correlacao, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
-        ax.set_title('Matriz de Correlação entre Doenças')
+        ax.set_title('Matriz de Correlação entre Doenças (filtrada)')
         st.pyplot(fig)
     else:
-        st.warning("Não há dados suficientes para calcular uma matriz de correlação significativa.")
+        st.warning("Não há dados suficientes ou doenças selecionadas para calcular uma matriz de correlação significativa.")
 
 # --------------------------------------------------------------------------------
-# 6. Predição de Casos com Prophet
-# --------------------------------------------------------------------------------
-
-st.header("Predição de Casos com Prophet")
-
-@st.cache_data
-def run_prophet_prediction(df, doenca_nome, periodos):
-    df_prophet = df.pivot_table(index='Data Notificação', columns='doença', values='Quantidade de casos', fill_value=0, aggfunc='sum')[[doenca_nome]].reset_index()
-    df_prophet.columns = ['ds', 'y']
-    df_prophet['ds'] = pd.to_datetime(df_prophet['ds'])
-
-    if len(df_prophet) < 2:
-        return None, None
-
-    modelo = Prophet(daily_seasonality=False)
-    modelo.fit(df_prophet)
-    futuro = modelo.make_future_dataframe(periods=periodos, freq='M')
-    previsao = modelo.predict(futuro)
-    return modelo, previsao
-
-if doenca_selecionada != 'Todas':
-    modelo, previsao = run_prophet_prediction(df_original, doenca_selecionada, periodos_predicao)
-    if modelo and previsao is not None:
-        st.subheader(f"Previsão para {doenca_selecionada} nos Próximos {periodos_predicao} Meses")
-        fig1 = modelo.plot(previsao)
-        st.pyplot(fig1)
-
-        fig2 = modelo.plot_components(previsao)
-        st.pyplot(fig2)
-    else:
-        st.info(f"Dados insuficientes para realizar a predição para {doenca_selecionada}.")
-else:
-    st.info("Selecione uma doença no painel lateral para visualizar a predição.")
-
-# --------------------------------------------------------------------------------
-# 7. Análise Geográfica com Mapas
+# 6. Análise Geográfica com Mapas (Melhorado com st.map e Pydeck)
 # --------------------------------------------------------------------------------
 
 st.header("Análise Geográfica")
 
-# Mapa de Calor
-st.subheader("Mapa de Calor de Incidência")
-if not df_com_coords.empty:
-    m = folium.Map(location=[-5.0, -39.5], zoom_start=7)
-    HeatMap(data=df_com_coords[['Latitude', 'Longitude', 'Quantidade de casos']].dropna(), radius=20).add_to(m)
-    # Salvar o mapa como HTML e exibi-lo no Streamlit
-    map_html = m._repr_html_()
-    st.components.v1.html(map_html, height=500, width=700)
-else:
-    st.warning("Nenhum dado com coordenadas geográficas disponível para mapeamento.")
+# Adicionar coordenadas ao DataFrame
+df_com_coords = df_filtrado.copy()
+df_com_coords['Latitude'] = df_com_coords['Município'].map(lambda x: coordenadas_ceara.get(x, [None, None])[0])
+df_com_coords['Longitude'] = df_com_coords['Município'].map(lambda x: coordenadas_ceara.get(x, [None, None])[1])
+df_com_coords.dropna(subset=['Latitude', 'Longitude'], inplace=True)
 
-# Mapa de Marcadores
-st.subheader("Mapa de Marcadores Detalhado")
 if not df_com_coords.empty:
-    m_marcadores = folium.Map(location=[-5.0, -39.5], zoom_start=7)
-    for _, row in df_com_coords.iterrows():
-        folium.Marker(
-            location=[row['Latitude'], row['Longitude']],
-            tooltip=f"<b>Município:</b> {row['Município']}<br><b>Doença:</b> {row['doença']}<br><b>Casos:</b> {row['Quantidade de casos']}<br><b>Data:</b> {row['Data Notificação'].strftime('%Y-%m-%d')}",
-            icon=folium.Icon(color='red', icon='info-sign')
-        ).add_to(m_marcadores)
-    map_html_marcadores = m_marcadores._repr_html_()
-    st.components.v1.html(map_html_marcadores, height=500, width=700)
+    df_mapa = df_com_coords.groupby(['Município', 'Latitude', 'Longitude', 'Doença'])['Quantidade de casos'].sum().reset_index()
+
+    st.subheader("Mapa de Incidência por Município (Cores por Doença)")
+    # Atribui a cor predominante da doença a cada ponto do mapa
+    df_mapa['cor_hex'] = df_mapa['Doença'].map(cores_doencas)
+    df_mapa[['r', 'g', 'b']] = df_mapa['cor_hex'].str.extract(r'rgb\((\d+), (\d+), (\d+)\)').astype(int)
+
+    st.map(df_mapa,
+           latitude='Latitude',
+           longitude='Longitude',
+           size='Quantidade de casos',
+           color='cor_hex')
+
+
+    st.subheader("Mapa de Calor (Gradiente de Cor por Incidência)")
+
+    # Criação do mapa de calor com Pydeck para personalização de cores
+    if len(doencas_selecionadas) == 1:
+        # Mapa com gradiente de uma única cor para uma doença selecionada
+        doenca_unica = doencas_selecionadas[0]
+        cor_base = list(map(int, cores_doencas[doenca_unica].strip('rgb()').split(',')))
+        color_range = [
+            [cor_base[0], cor_base[1], cor_base[2], 0],
+            [cor_base[0], cor_base[1], cor_base[2], 50],
+            [cor_base[0], cor_base[1], cor_base[2], 100],
+            [cor_base[0], cor_base[1], cor_base[2], 150],
+            [cor_base[0], cor_base[1], cor_base[2], 200],
+            [cor_base[0], cor_base[1], cor_base[2], 255]
+        ]
+        layer = pdk.Layer(
+            "HeatmapLayer",
+            data=df_com_coords,
+            get_position="[Longitude, Latitude]",
+            aggregation='SUM',
+            get_weight="Quantidade de casos",
+            opacity=0.8,
+            color_range=color_range,
+        )
+    else:
+        # Mapa de calor padrão com múltiplas doenças
+        layer = pdk.Layer(
+            "HeatmapLayer",
+            data=df_com_coords,
+            get_position="[Longitude, Latitude]",
+            aggregation='SUM',
+            get_weight="Quantidade de casos",
+            opacity=0.8
+        )
+
+    # Configuração da visualização do mapa com Pydeck
+    view_state = pdk.ViewState(
+        latitude=df_com_coords['Latitude'].mean(),
+        longitude=df_com_coords['Longitude'].mean(),
+        zoom=7,
+        pitch=50,
+    )
+
+    r = pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        map_style='mapbox://styles/mapbox/light-v9'
+    )
+
+    st.pydeck_chart(r)
+
 else:
-    st.warning("Nenhum dado com coordenadas geográficas disponível para mapeamento.")
+    st.warning("Nenhum dado com coordenadas geográficas disponível para mapeamento com os filtros selecionados.")
+
 
 # Fim do script
 st.markdown("---")
