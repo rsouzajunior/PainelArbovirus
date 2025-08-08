@@ -1,7 +1,7 @@
 streamlit
 pandas
+geopandas
+numpy
+pydeck
+plotly
 matplotlib
-seaborn
-folium
-prophet
-plotly.express
