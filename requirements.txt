@@ -5,3 +5,4 @@ numpy
 pydeck
 plotly
 matplotlib
+seaborn 
