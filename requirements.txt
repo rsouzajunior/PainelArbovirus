@@ -8,3 +8,4 @@ seaborn
 statsmodels
 pmdarima
 xgboost
+sarimax
