@@ -1,5 +1,6 @@
 streamlit 
 pandas
+statsmodels
 numpy
 plotly
 pydeck
@@ -8,4 +9,3 @@ seaborn
 statsmodels
 pmdarima
 xgboost
-sarimax
