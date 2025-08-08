@@ -1,11 +1,11 @@
 streamlit
+millify
 pandas
 numpy
 plotly
 pydeck
 matplotlib
 seaborn
-millify
 statsmodels
 pmdarima
 xgboost
