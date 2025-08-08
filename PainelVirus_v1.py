@@ -13,7 +13,7 @@ import warnings
 import re
 from datetime import date
 import html
-from millify import millify
+# from millify import millify
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from pmdarima import auto_arima
 import plotly.graph_objects as go
@@ -167,7 +167,20 @@ for feature in geojson_data['features']:
         feature['properties']['doenca_predominante'] = "N/A"
         feature['properties']['cor_predominante'] = [128, 128, 128]
 
+def abreviar_numero(n):
+    try:
+        n = float(n)
+    except (ValueError, TypeError):
+        return str(n)
 
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.2f}B"
+    elif n >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    elif n >= 1_000:
+        return f"{n / 1_000:.2f}K"
+    else:
+        return str(n)
 
 # --------------------------------------------------------------------------------
 # 4. Sidebar para Filtros
@@ -308,7 +321,7 @@ with col2:
 with col3:
     st.markdown(f"**Municípios:** <br><div style='font-size: 2.5em; font-weight: bold; color: lightgray;'>{df_filtrado['Município'].nunique()}</div>", unsafe_allow_html=True)
 with col4:
-    st.markdown(f"**População:** <br><div style='font-size: 2.5em; font-weight: bold; color: lightgray;'>{millify(populacao_total_filtrada)}</div>", unsafe_allow_html=True)
+    st.markdown(f"**População:** <br><div style='font-size: 2.5em; font-weight: bold; color: lightgray;'>{abreviar_numero(populacao_total_filtrada)}</div>", unsafe_allow_html=True)
 with col5:
     st.markdown(f"**Taxa Transm. (100k hab.):** <br><div style='font-size: 2.5em; font-weight: bold; color: lightgray;'>{taxa_100k:,.2f}</div>", unsafe_allow_html=True)
 #with col6:
